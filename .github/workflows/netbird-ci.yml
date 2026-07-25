@@ -68,3 +68,5 @@ jobs:
           echo "RDP: $IP:3389 (user: rdpuser, pass: root)"
           echo "VNC: $IP:5901 (pass: root)"
           echo "=========================================="
+          echo "⏱️ Server runs for 6 HOURS"
+          echo "✅ You can do other work now!"
