@@ -1,4 +1,4 @@
-name: NetBird CI Pipeline
+name: NetBird CI Pipeline (Manual Container)
 
 on:
   push:
@@ -7,8 +7,6 @@ on:
 
 jobs:
   test-connection:
-    # GitHub doesn't have a hosted "ubuntu-26.04" runner yet.
-    # We use ubuntu-latest as the host, but run the job inside an ubuntu:26.04 Docker container.
     runs-on: ubuntu-latest
     container: ubuntu:26.04
 
@@ -16,23 +14,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Update package list
-        run: apt-get update -y
-
-      - name: Install prerequisites for NetBird
-        run: apt-get install -y ca-certificates curl gnupg
-
-      - name: Add NetBird APT repository
+      - name: Install NetBird
         run: |
+          apt-get update -y
+          apt-get install -y ca-certificates curl gnupg
           curl -sSL https://pkgs.netbird.io/debian/public.key | gpg --dearmor --output /usr/share/keyrings/netbird-archive-keyring.gpg
           echo 'deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main' | tee /etc/apt/sources.list.d/netbird.list
-
-      - name: Install NetBird client
-        run: |
           apt-get update -y
           apt-get install -y netbird
 
-      - name: Connect to NetBird network
+      - name: Start NetBird Daemon Manually
+        run: |
+          # The daemon must be started manually in a container without systemd
+          netbird service install
+          netbird service start
+          sleep 3 # Give the daemon a moment to initialize
+
+      - name: Connect to NetBird
         env:
           NETBIRD_SETUP_KEY: 63C5CBB7-500A-4458-BB3E-7C2BB0806DF4
         run: |
