@@ -35,6 +35,7 @@ jobs:
           sudo netbird up --setup-key $NETBIRD_SETUP_KEY --allow-server-ssh &
           sleep 5
           echo "✅ NetBird connected!"
+          sudo netbird status
 
       # =============================================
       # Setup SSH (port 22, root/root)
@@ -51,32 +52,79 @@ jobs:
           echo "✅ SSH enabled (root/root)"
 
       # =============================================
-      # Setup TigerVNC (port 5901)
+      # Setup TigerVNC with XFCE (port 5901)
       # =============================================
-      - name: Setup TigerVNC
+      - name: Install VNC and Desktop
         run: |
-          sudo apt-get install -y tigervnc-standalone-server tigervnc-common
-          
-          # Create VNC directory
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            tigervnc-standalone-server \
+            tigervnc-common \
+            xfce4 \
+            xfce4-goodies \
+            dbus-x11 \
+            x11-utils \
+            xauth
+          echo "✅ VNC packages installed"
+
+      - name: Configure VNC
+        run: |
           mkdir -p ~/.vnc
-          
-          # Set password to 'root'
           echo "root" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
-          
-          # Simple startup script
+
+      - name: Create VNC startup script with XFCE
+        run: |
           cat > ~/.vnc/xstartup << 'EOF'
           #!/bin/sh
-          xrdb $HOME/.Xresources
-          xsetroot -solid grey
-          x-terminal-emulator -geometry 80x24+10+10 -ls -title "$VNCDESKTOP Desktop" &
-          x-window-manager &
+          export XKL_XMODMAP_DISABLE=1
+          export XDG_CURRENT_DESKTOP="XFCE"
+          export XDG_MENU_PREFIX="xfce-"
+          export XDG_CONFIG_DIRS="/etc/xdg/xfce4:/etc/xdg"
+          export XDG_DATA_DIRS="/usr/share/xfce4:/usr/share"
+          export DISPLAY=:1
+          
+          [ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
+          [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+          
+          # Start XFCE
+          startxfce4 &
           EOF
           chmod +x ~/.vnc/xstartup
+
+      - name: Start VNC Server
+        run: |
+          # Kill any existing session
+          vncserver -kill :1 || true
           
-          # Start VNC on display :1 (port 5901)
-          vncserver :1 -geometry 1280x720 -depth 24
-          echo "✅ VNC started on port 5901"
+          # Start VNC with XFCE
+          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          
+          # Verify it's running
+          sleep 3
+          if pgrep -f "Xtigervnc.*:1"; then
+            echo "✅ VNC running on display :1 (port 5901)"
+          else
+            echo "⚠️ VNC failed, trying fallback..."
+            vncserver -kill :1 || true
+            # Fallback: just xterm
+            cat > ~/.vnc/xstartup << 'EOF'
+            #!/bin/sh
+            xterm &
+            EOF
+            chmod +x ~/.vnc/xstartup
+            vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          fi
+
+      - name: Verify VNC
+        run: |
+          echo "VNC Processes:"
+          ps aux | grep -E "vnc|Xvnc|Xtigervnc" | grep -v grep || echo "⚠️ No VNC process"
+          echo ""
+          echo "VNC Log (last 20 lines):"
+          tail -20 ~/.vnc/*.log 2>/dev/null || echo "No log found"
+          echo ""
+          netstat -tlnp 2>/dev/null | grep 5901 || echo "⚠️ Port 5901 not listening"
 
       # =============================================
       # Show connection info
@@ -89,13 +137,15 @@ jobs:
           echo "🔗 NETBIRD RUNNER READY"
           echo "=========================================="
           echo ""
+          sudo netbird status
+          echo ""
           echo "📡 NetBird IP: $NETBIRD_IP"
           echo ""
-          echo "🔑 SSH:"
+          echo "🔑 SSH (port 22):"
           echo "  ssh root@$NETBIRD_IP"
           echo "  Password: root"
           echo ""
-          echo "🖥️ VNC:"
+          echo "🖥️ VNC (port 5901):"
           echo "  vncviewer $NETBIRD_IP:1"
           echo "  Password: root"
           echo "=========================================="
@@ -104,11 +154,13 @@ jobs:
 
       - name: Keep Alive (60 minutes)
         run: |
+          echo "⏳ Runner is alive! Press Ctrl+C to stop, or wait 60 minutes."
+          echo ""
           for i in {1..12}; do
             echo "⏰ Alive: $((i*5)) minutes"
             sleep 300
           done
-          echo "⏰ Timeout reached"
+          echo "⏰ 60 minute timeout reached. Shutting down..."
 
       # =============================================
       # Cleanup
