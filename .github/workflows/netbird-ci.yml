@@ -1,193 +1,21 @@
-name: NetBird Python CI
+name: NetBird Persistent Runner with VNC
 
 on:
+  workflow_dispatch:  # Manual trigger
   push:
-    branches: [ main, master ]
-  pull_request:
     branches: [ main, master ]
 
 jobs:
-  # Job 1: Test NetBird connection on GitHub runner
-  test-connection:
+  netbird-persistent-runner:
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Update package list
-        run: sudo apt-get update -y
-
-      - name: Install prerequisites
-        run: |
-          sudo apt-get install -y ca-certificates curl gnupg
-
-      - name: Add NetBird APT repository
-        run: |
-          curl -sSL https://pkgs.netbird.io/debian/public.key | sudo gpg --dearmor --output /usr/share/keyrings/netbird-archive-keyring.gpg
-          echo 'deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main' | sudo tee /etc/apt/sources.list.d/netbird.list
-
-      - name: Install NetBird client
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y netbird
-
-      - name: Connect to NetBird network
-        env:
-          NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
-        run: |
-          sudo netbird up --setup-key $NETBIRD_SETUP_KEY &
-          sleep 5
-
-      - name: Check connection status
-        run: sudo netbird status
-
-      - name: Verify Python is available
-        run: |
-          python3 --version
-          echo "✅ Python environment ready"
-
-  # Job 2: Build Python container with NetBird (APT method - WORKING)
-  container-build:
-    runs-on: ubuntu-latest
-    needs: test-connection
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: Create Dockerfile with NetBird from APT
-        run: |
-          cat > Dockerfile << 'EOF'
-          FROM python:3.12-slim
-          
-          # Install NetBird from APT with workaround
-          RUN apt-get update && apt-get install -y \
-              curl \
-              gnupg \
-              ca-certificates \
-              && curl -sSL https://pkgs.netbird.io/debian/public.key | gpg --dearmor --output /usr/share/keyrings/netbird-archive-keyring.gpg \
-              && echo 'deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main' | tee /etc/apt/sources.list.d/netbird.list \
-              && apt-get update \
-              && apt-get download netbird \
-              && dpkg --force-all -i netbird*.deb || true \
-              && apt-get install -f -y || true \
-              && apt-get clean \
-              && rm -rf /var/lib/apt/lists/*
-          
-          # Create /app directory
-          RUN mkdir -p /app
-          
-          # Create Python app
-          RUN echo '#!/usr/bin/env python3' > /app/app.py && \
-              echo 'import subprocess' >> /app/app.py && \
-              echo 'import os' >> /app/app.py && \
-              echo 'import time' >> /app/app.py && \
-              echo '' >> /app/app.py && \
-              echo 'def connect_netbird():' >> /app/app.py && \
-              echo '    setup_key = os.environ.get("NETBIRD_SETUP_KEY")' >> /app/app.py && \
-              echo '    if setup_key:' >> /app/app.py && \
-              echo '        print("🔗 Connecting to NetBird...")' >> /app/app.py && \
-              echo '        # Try APT-installed netbird first' >> /app/app.py && \
-              echo '        try:' >> /app/app.py && \
-              echo '            subprocess.run(["netbird", "up", "--setup-key", setup_key], check=False)' >> /app/app.py && \
-              echo '        except FileNotFoundError:' >> /app/app.py && \
-              echo '            print("⚠️ netbird command not found, trying alternative path")' >> /app/app.py && \
-              echo '            subprocess.run(["/usr/bin/netbird", "up", "--setup-key", setup_key], check=False)' >> /app/app.py && \
-              echo '        time.sleep(3)' >> /app/app.py && \
-              echo '        subprocess.run(["netbird", "status"])' >> /app/app.py && \
-              echo '    else:' >> /app/app.py && \
-              echo '        print("⚠️ No NETBIRD_SETUP_KEY found")' >> /app/app.py && \
-              echo '' >> /app/app.py && \
-              echo 'if __name__ == "__main__":' >> /app/app.py && \
-              echo '    print("🐍 Python container with NetBird")' >> /app/app.py && \
-              echo '    print("=" * 40)' >> /app/app.py && \
-              echo '    connect_netbird()' >> /app/app.py && \
-              echo '    print("✅ Application is running")' >> /app/app.py
-          
-          WORKDIR /app
-          CMD ["python3", "/app/app.py"]
-          EOF
-      
-      - name: Build Docker container
-        run: |
-          docker build -t python-netbird:latest .
-      
-      - name: Test Docker container with NetBird
-        env:
-          NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
-        run: |
-          docker run --rm \
-            -e NETBIRD_SETUP_KEY=$NETBIRD_SETUP_KEY \
-            python-netbird:latest
-
-  # Job 3: Python script test on GitHub runner
-  python-script-test:
-    runs-on: ubuntu-latest
-    needs: test-connection
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      
-      - name: Install NetBird on runner
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ca-certificates curl gnupg
-          curl -sSL https://pkgs.netbird.io/debian/public.key | sudo gpg --dearmor --output /usr/share/keyrings/netbird-archive-keyring.gpg
-          echo 'deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main' | sudo tee /etc/apt/sources.list.d/netbird.list
-          sudo apt-get update -y
-          sudo apt-get install -y netbird
-      
-      - name: Create Python test script
-        run: |
-          cat > test_netbird.py << 'EOF'
-          #!/usr/bin/env python3
-          import subprocess
-          import os
-          import time
-          
-          def connect_netbird():
-              setup_key = os.environ.get('NETBIRD_SETUP_KEY')
-              if setup_key:
-                  print("🔗 Connecting to NetBird...")
-                  subprocess.run(['sudo', 'netbird', 'up', '--setup-key', setup_key], check=False)
-                  time.sleep(3)
-                  print("📊 Network status:")
-                  subprocess.run(['sudo', 'netbird', 'status'])
-              else:
-                  print("⚠️ No NETBIRD_SETUP_KEY found")
-          
-          if __name__ == "__main__":
-              print("🐍 Testing NetBird with Python")
-              print("=" * 40)
-              connect_netbird()
-              print("✅ Python script completed successfully")
-          EOF
-          chmod +x test_netbird.py
-      
-      - name: Run Python test
-        env:
-          NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
-        run: |
-          python3 test_netbird.py
-
-  # Job 4: Simple connection test
-  minimal-test:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
+      # =============================================
+      # Install and connect NetBird
+      # =============================================
       - name: Install NetBird
         run: |
           sudo apt-get update -y
@@ -196,13 +24,86 @@ jobs:
           echo 'deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main' | sudo tee /etc/apt/sources.list.d/netbird.list
           sudo apt-get update -y
           sudo apt-get install -y netbird
-      
-      - name: Quick NetBird test
+
+      - name: Connect to NetBird
         env:
           NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
         run: |
-          echo "🚀 Starting NetBird connection test..."
-          sudo netbird up --setup-key $NETBIRD_SETUP_KEY &
+          sudo netbird up --setup-key $NETBIRD_SETUP_KEY --allow-server-ssh &
           sleep 5
+          echo "✅ NetBird connected!"
           sudo netbird status
-          echo "✅ NetBird connection successful!"
+
+      # =============================================
+      # Set up SSH via NetBird
+      # =============================================
+      - name: Enable NetBird SSH
+        run: |
+          sudo netbird up --allow-server-ssh
+          echo "🔑 NetBird SSH enabled on port 44338"
+
+      # =============================================
+      # Install and configure VNC server
+      # =============================================
+      - name: Install VNC and desktop
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y tigervnc-standalone-server tigervnc-common xfce4 xfce4-goodies dbus-x11
+          echo "✅ VNC installed"
+
+      - name: Configure VNC password
+        run: |
+          mkdir -p ~/.vnc
+          echo "netbird123" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+
+      - name: Create VNC startup script
+        run: |
+          cat > ~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+          startxfce4 &
+          EOF
+          chmod +x ~/.vnc/xstartup
+
+      - name: Start VNC server
+        run: |
+          vncserver :1 -geometry 1920x1080 -depth 24
+          echo "✅ VNC started on display :1 (port 5901)"
+
+      # =============================================
+      # Keep alive and show connection info
+      # =============================================
+      - name: Connection Info
+        run: |
+          echo "=========================================="
+          echo "🔗 NETBIRD RUNNER READY"
+          echo "=========================================="
+          echo ""
+          sudo netbird status
+          echo ""
+          echo "📡 NetBird IP:"
+          sudo netbird status | grep "NetBird IP"
+          echo ""
+          echo "🔑 SSH: ssh runner@<NetBird-IP>"
+          echo "🖥️ VNC: vncviewer <NetBird-IP>:1"
+          echo "🔑 VNC Password: netbird123"
+          echo "=========================================="
+          echo ""
+          echo "⏳ Keeping runner alive for 60 minutes..."
+
+      - name: Keep alive
+        run: |
+          sleep 3600
+          echo "⏰ Timeout reached"
+
+      # =============================================
+      # Cleanup
+      # =============================================
+      - name: Cleanup
+        if: always()
+        run: |
+          vncserver -kill :1 || true
+          sudo netbird down || true
+          echo "🧹 Cleanup complete"
