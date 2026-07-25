@@ -1,22 +1,16 @@
-name: Ubuntu VPS with NetBird
+name: Ubuntu VPS
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main, master ]
 
 jobs:
-  ubuntu-vps:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # GitHub max 6 hours
+    timeout-minutes: 360
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # =============================================
-      # Install NetBird
-      # =============================================
       - name: Install NetBird
         run: |
           sudo apt-get update -y
@@ -26,85 +20,51 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y netbird
 
-      # =============================================
-      # Start NetBird as daemon
-      # =============================================
-      - name: Start NetBird
+      - name: Connect NetBird
         env:
           NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
         run: |
           sudo netbird up --setup-key $NETBIRD_SETUP_KEY --allow-server-ssh &
           sleep 5
-          echo "✅ NetBird connected"
-          sudo netbird status
 
-      # =============================================
-      # Setup SSH (root/root)
-      # =============================================
-      - name: Setup SSH
+      - name: Install SSH, RDP, VNC
         run: |
-          sudo apt-get install -y openssh-server
+          sudo apt-get update -y
+          sudo apt-get install -y openssh-server xrdp xfce4 xfce4-goodies dbus-x11 tigervnc-standalone-server tigervnc-common
+
+      - name: Configure SSH
+        run: |
           echo "root:root" | sudo chpasswd
           sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo systemctl restart ssh
-          echo "✅ SSH ready (root/root)"
 
-      # =============================================
-      # Setup xRDP
-      # =============================================
-      - name: Setup xRDP
+      - name: Configure RDP
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y xrdp xfce4 xfce4-goodies dbus-x11
           echo "xfce4-session" > ~/.xsession
           sudo systemctl restart xrdp
           sudo useradd -m -s /bin/bash rdpuser || true
           echo "rdpuser:root" | sudo chpasswd
-          sudo usermod -aG sudo rdpuser
-          echo "✅ xRDP ready"
 
-      # =============================================
-      # Show connection info and EXIT
-      # =============================================
-      - name: Connection Info
+      - name: Configure VNC
         run: |
-          NETBIRD_IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-          echo "=========================================="
-          echo "✅ UBUNTU VPS IS READY"
-          echo "=========================================="
-          echo ""
-          echo "📡 NetBird IP: $NETBIRD_IP"
-          echo ""
-          echo "🔑 SSH (port 22):"
-          echo "  ssh root@$NETBIRD_IP"
-          echo "  Password: root"
-          echo ""
-          echo "🖥️ xRDP (port 3389):"
-          echo "  Address: $NETBIRD_IP:3389"
-          echo "  User: rdpuser"
-          echo "  Password: root"
-          echo "=========================================="
-          echo ""
-          echo "⏱️ Server runs for 6 HOURS"
-          echo "📌 IP: $NETBIRD_IP"
-          echo ""
-          echo "✅ SETUP COMPLETE - CONNECT NOW!"
+          mkdir -p ~/.vnc
+          echo "root" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          echo '#!/bin/sh' > ~/.vnc/xstartup
+          echo 'startxfce4 &' >> ~/.vnc/xstartup
+          chmod +x ~/.vnc/xstartup
+          vncserver :1 -geometry 1920x1080 -depth 24 &
 
-      # =============================================
-      # NATURAL 6 HOURS - NO SLEEP LOOPS
-      # =============================================
-      - name: Keep Server Alive
+      - name: Show IP
         run: |
-          echo "✅ Server is running..."
-          echo "✅ NetBird is connected..."
-          echo "✅ SSH and RDP are available..."
-          echo ""
-          echo "This job will run for 6 hours."
-          echo "The server will auto-shutdown after 6 hours."
-          echo ""
-          # GitHub Actions keeps the job alive for timeout-minutes
-          # Just a simple command that doesn't exit
-          tail -f /dev/null
+          IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          echo "=========================================="
+          echo "✅ UBUNTU SERVER READY"
+          echo "=========================================="
+          echo "IP: $IP"
+          echo "SSH: ssh root@$IP (pass: root)"
+          echo "RDP: $IP:3389 (user: rdpuser, pass: root)"
+          echo "VNC: $IP:5901 (pass: root)"
+          echo "=========================================="
