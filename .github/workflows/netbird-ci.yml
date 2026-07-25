@@ -28,46 +28,88 @@ jobs:
         run: |
           sudo netbird up --setup-key $NETBIRD_SETUP_KEY --allow-server-ssh &
           sleep 5
+          sudo netbird status
 
       - name: Install SSH, RDP, VNC
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y openssh-server xrdp xfce4 xfce4-goodies dbus-x11 tigervnc-standalone-server tigervnc-common
+          sudo apt-get install -y \
+            openssh-server \
+            xrdp \
+            xfce4 \
+            xfce4-goodies \
+            dbus-x11 \
+            tigervnc-standalone-server \
+            tigervnc-common
 
-      - name: Configure SSH
+      - name: Configure SSH (root/root)
         run: |
           echo "root:root" | sudo chpasswd
           sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo systemctl restart ssh
 
-      - name: Configure RDP
+      - name: Configure xRDP (rdpuser/root)
         run: |
           echo "xfce4-session" > ~/.xsession
           sudo systemctl restart xrdp
           sudo useradd -m -s /bin/bash rdpuser || true
           echo "rdpuser:root" | sudo chpasswd
+          sudo usermod -aG sudo rdpuser
 
-      - name: Configure VNC
+      - name: Configure VNC (root)
         run: |
           mkdir -p ~/.vnc
           echo "root" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
-          echo '#!/bin/sh' > ~/.vnc/xstartup
-          echo 'startxfce4 &' >> ~/.vnc/xstartup
+          cat > ~/.vnc/xstartup << 'EOF'
+          #!/bin/sh
+          startxfce4 &
+          EOF
           chmod +x ~/.vnc/xstartup
           vncserver :1 -geometry 1920x1080 -depth 24 &
 
-      - name: Show IP
+      - name: Connection Info
         run: |
           IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           echo "=========================================="
-          echo "✅ UBUNTU SERVER READY"
+          echo "✅ UBUNTU VPS READY"
           echo "=========================================="
-          echo "IP: $IP"
-          echo "SSH: ssh root@$IP (pass: root)"
-          echo "RDP: $IP:3389 (user: rdpuser, pass: root)"
-          echo "VNC: $IP:5901 (pass: root)"
+          echo ""
+          echo "📡 NetBird IP: $IP"
+          echo ""
+          echo "🔑 SSH (port 22):"
+          echo "  ssh root@$IP"
+          echo "  Password: root"
+          echo ""
+          echo "🖥️ xRDP (port 3389):"
+          echo "  Address: $IP:3389"
+          echo "  User: rdpuser"
+          echo "  Password: root"
+          echo ""
+          echo "🖥️ VNC (port 5901):"
+          echo "  vncviewer $IP:5901"
+          echo "  Password: root"
           echo "=========================================="
+          echo ""
           echo "⏱️ Server runs for 6 HOURS"
+          echo "📌 Auto-starts on commit to main/master"
+          echo "✅ You can do other work now!"
+
+      - name: Keep Alive (6 hours)
+        run: |
+          echo "=========================================="
+          echo "🚀 SERVER IS RUNNING"
+          echo "=========================================="
+          echo ""
+          echo "✅ NetBird connected"
+          echo "✅ SSH running on port 22"
+          echo "✅ xRDP running on port 3389"
+          echo "✅ VNC running on port 5901"
+          echo ""
+          echo "⏳ Keeping alive for 6 hours..."
+          echo "   GitHub will auto-stop after 6 hours"
+          echo ""
+          tail -f /dev/null
