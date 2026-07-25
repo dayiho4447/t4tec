@@ -47,7 +47,7 @@ jobs:
           python3 --version
           echo "✅ Python environment ready"
 
-  # Job 2: Build Python container with NetBird (APT method - fixed)
+  # Job 2: Build Python container with NetBird (using static binary only - FIXED)
   container-build:
     runs-on: ubuntu-latest
     needs: test-connection
@@ -59,28 +59,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Create Dockerfile with NetBird
+      - name: Create Dockerfile with NetBird static binary
         run: |
           cat > Dockerfile << 'EOF'
           FROM python:3.12-slim
           
-          # Install NetBird without service installation
-          RUN apt-get update && apt-get install -y \
-              curl \
-              gnupg \
-              ca-certificates \
-              && curl -sSL https://pkgs.netbird.io/debian/public.key | gpg --dearmor --output /usr/share/keyrings/netbird-archive-keyring.gpg \
-              && echo 'deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main' | tee /etc/apt/sources.list.d/netbird.list \
-              && apt-get update \
-              && apt-get install -y --no-install-recommends netbird \
-              && apt-get clean \
-              && rm -rf /var/lib/apt/lists/* \
-              && mkdir -p /etc/init.d
+          # Download NetBird static binary directly (no APT issues)
+          RUN apt-get update && apt-get install -y curl && \
+              curl -L https://github.com/netbirdio/netbird/releases/latest/download/netbird-linux-amd64 -o /usr/local/bin/netbird && \
+              chmod +x /usr/local/bin/netbird && \
+              apt-get clean && \
+              rm -rf /var/lib/apt/lists/*
           
-          # Create dummy init script to prevent errors
-          RUN touch /etc/init.d/netbird && chmod +x /etc/init.d/netbird
-          
-          # Create /app directory first
+          # Create /app directory
           RUN mkdir -p /app
           
           # Create Python app
@@ -93,9 +84,9 @@ jobs:
               echo '    setup_key = os.environ.get("NETBIRD_SETUP_KEY")' >> /app/app.py && \
               echo '    if setup_key:' >> /app/app.py && \
               echo '        print("🔗 Connecting to NetBird...")' >> /app/app.py && \
-              echo '        subprocess.run(["netbird", "up", "--setup-key", setup_key], check=False)' >> /app/app.py && \
+              echo '        subprocess.run(["/usr/local/bin/netbird", "up", "--setup-key", setup_key], check=False)' >> /app/app.py && \
               echo '        time.sleep(3)' >> /app/app.py && \
-              echo '        subprocess.run(["netbird", "status"])' >> /app/app.py && \
+              echo '        subprocess.run(["/usr/local/bin/netbird", "status"])' >> /app/app.py && \
               echo '    else:' >> /app/app.py && \
               echo '        print("⚠️ No NETBIRD_SETUP_KEY found")' >> /app/app.py && \
               echo '' >> /app/app.py && \
@@ -121,8 +112,8 @@ jobs:
             -e NETBIRD_SETUP_KEY=$NETBIRD_SETUP_KEY \
             python-netbird:latest
 
-  # Job 3: Alternative - Use NetBird static binary in container (fixed)
-  static-binary-build:
+  # Job 3: Alternative - Use pre-built NetBird Docker image
+  prebuilt-container:
     runs-on: ubuntu-latest
     needs: test-connection
     
@@ -133,19 +124,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Create Dockerfile with static binary
+      - name: Create Dockerfile using pre-built NetBird
         run: |
-          cat > Dockerfile.static << 'EOF'
+          cat > Dockerfile.prebuilt << 'EOF'
+          # Use official NetBird image as base
+          FROM netbirdio/netbird:latest AS netbird
+          
+          # Use Python image
           FROM python:3.12-slim
           
-          # Download NetBird static binary
-          RUN apt-get update && apt-get install -y curl && \
-              curl -L https://github.com/netbirdio/netbird/releases/latest/download/netbird-linux-amd64 -o /usr/local/bin/netbird && \
-              chmod +x /usr/local/bin/netbird && \
-              apt-get clean && \
-              rm -rf /var/lib/apt/lists/*
+          # Copy NetBird binary from official image
+          COPY --from=netbird /usr/bin/netbird /usr/local/bin/netbird
           
-          # Create /app directory first
+          # Create /app directory
           RUN mkdir -p /app
           
           # Create Python app
@@ -157,7 +148,7 @@ jobs:
               echo 'def connect_netbird():' >> /app/app.py && \
               echo '    setup_key = os.environ.get("NETBIRD_SETUP_KEY")' >> /app/app.py && \
               echo '    if setup_key:' >> /app/app.py && \
-              echo '        print("🔗 Connecting to NetBird with static binary...")' >> /app/app.py && \
+              echo '        print("🔗 Connecting to NetBird...")' >> /app/app.py && \
               echo '        subprocess.run(["/usr/local/bin/netbird", "up", "--setup-key", setup_key], check=False)' >> /app/app.py && \
               echo '        time.sleep(3)' >> /app/app.py && \
               echo '        subprocess.run(["/usr/local/bin/netbird", "status"])' >> /app/app.py && \
@@ -165,7 +156,7 @@ jobs:
               echo '        print("⚠️ No NETBIRD_SETUP_KEY found")' >> /app/app.py && \
               echo '' >> /app/app.py && \
               echo 'if __name__ == "__main__":' >> /app/app.py && \
-              echo '    print("🐍 Python container with NetBird (static)")' >> /app/app.py && \
+              echo '    print("🐍 Python container with NetBird (pre-built)")' >> /app/app.py && \
               echo '    print("=" * 40)' >> /app/app.py && \
               echo '    connect_netbird()' >> /app/app.py && \
               echo '    print("✅ Application is running")' >> /app/app.py
@@ -174,17 +165,17 @@ jobs:
           CMD ["python3", "/app/app.py"]
           EOF
       
-      - name: Build static binary container
+      - name: Build pre-built container
         run: |
-          docker build -f Dockerfile.static -t python-netbird-static:latest .
+          docker build -f Dockerfile.prebuilt -t python-netbird-prebuilt:latest .
       
-      - name: Test static binary container
+      - name: Test pre-built container
         env:
           NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
         run: |
           docker run --rm \
             -e NETBIRD_SETUP_KEY=$NETBIRD_SETUP_KEY \
-            python-netbird-static:latest
+            python-netbird-prebuilt:latest
 
   # Job 4: Python script test on GitHub runner
   python-script-test:
