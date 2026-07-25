@@ -1,6 +1,8 @@
 name: Ubuntu VPS
 
 on:
+  push:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -69,4 +71,3 @@ jobs:
           echo "VNC: $IP:5901 (pass: root)"
           echo "=========================================="
           echo "⏱️ Server runs for 6 HOURS"
-          echo "✅ You can do other work now!"
