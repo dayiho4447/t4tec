@@ -1,41 +1,37 @@
-name: NetBird CI Pipeline (Manual Container)
+# This pipeline runs a job on a GitLab Runner with Ubuntu 26.04 LTS.
+# It installs NetBird and connects using a provided setup key.
 
-on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
+stages:
+  - test-connection
 
-jobs:
-  test-connection:
-    runs-on: ubuntu-latest
-    container: ubuntu:26.04
+netbird-connect-job:
+  stage: test-connection
+  tags:
+    - ubuntu-26.04
+  image: ubuntu:26.04
+  script:
+    - echo "Updating package list..."
+    - apt-get update -y
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - echo "Installing prerequisites for NetBird..."
+    - apt-get install -y ca-certificates curl gnupg
 
-      - name: Install NetBird
-        run: |
-          apt-get update -y
-          apt-get install -y ca-certificates curl gnupg
-          curl -sSL https://pkgs.netbird.io/debian/public.key | gpg --dearmor --output /usr/share/keyrings/netbird-archive-keyring.gpg
-          echo 'deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main' | tee /etc/apt/sources.list.d/netbird.list
-          apt-get update -y
-          apt-get install -y netbird
+    - echo "Adding the NetBird APT repository..."
+    - curl -sSL https://pkgs.netbird.io/debian/public.key | gpg --dearmor --output /usr/share/keyrings/netbird-archive-keyring.gpg
+    - echo 'deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main' | tee /etc/apt/sources.list.d/netbird.list
 
-      - name: Start NetBird Daemon Manually
-        run: |
-          # The daemon must be started manually in a container without systemd
-          netbird service install
-          netbird service start
-          sleep 3 # Give the daemon a moment to initialize
+    - echo "Installing NetBird client..."
+    - apt-get update -y
+    - apt-get install -y netbird
 
-      - name: Connect to NetBird
-        env:
-          NETBIRD_SETUP_KEY: 63C5CBB7-500A-4458-BB3E-7C2BB0806DF4
-        run: |
-          netbird up --setup-key $NETBIRD_SETUP_KEY
+    - echo "Connecting to NetBird network in foreground mode..."
+    - netbird up --setup-key $NETBIRD_SETUP_KEY --daemon &
 
-      - name: Check connection status
-        run: |
-          netbird status
+    - echo "Waiting for daemon to start..."
+    - sleep 5
+
+    - echo "Checking connection status..."
+    - netbird status
+
+  variables:
+    NETBIRD_SETUP_KEY: $NETBIRD_SETUP_KEY
