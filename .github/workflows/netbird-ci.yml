@@ -1,4 +1,4 @@
-name: Persistent Ubuntu VPS with NetBird
+name: Ubuntu VPS with NetBird
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
 jobs:
   ubuntu-vps:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours max
+    timeout-minutes: 360  # GitHub max 6 hours
     
     steps:
       - name: Checkout code
@@ -27,20 +27,19 @@ jobs:
           sudo apt-get install -y netbird
 
       # =============================================
-      # Start NetBird as PERSISTENT SERVICE
+      # Start NetBird as daemon
       # =============================================
-      - name: Start NetBird Service
+      - name: Start NetBird
         env:
           NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
         run: |
-          # Start NetBird as background service
-          sudo netbird up --setup-key $NETBIRD_SETUP_KEY --allow-server-ssh
+          sudo netbird up --setup-key $NETBIRD_SETUP_KEY --allow-server-ssh &
           sleep 5
-          echo "✅ NetBird running as service"
+          echo "✅ NetBird connected"
           sudo netbird status
 
       # =============================================
-      # Setup SSH (root/root login)
+      # Setup SSH (root/root)
       # =============================================
       - name: Setup SSH
         run: |
@@ -51,53 +50,30 @@ jobs:
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo systemctl restart ssh
-          echo "✅ SSH enabled (root/root)"
+          echo "✅ SSH ready (root/root)"
 
       # =============================================
-      # Setup xRDP (Remote Desktop)
+      # Setup xRDP
       # =============================================
-      - name: Install xRDP and Desktop
+      - name: Setup xRDP
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y \
-            xrdp \
-            xfce4 \
-            xfce4-goodies \
-            dbus-x11 \
-            xorg \
-            x11-utils
-          echo "✅ xRDP installed"
-
-      - name: Configure xRDP for XFCE
-        run: |
-          # Set XFCE as default session
+          sudo apt-get install -y xrdp xfce4 xfce4-goodies dbus-x11
           echo "xfce4-session" > ~/.xsession
-          echo "startxfce4" > ~/.xsessionrc
-          
-          # Configure xrdp to use XFCE
-          sudo sed -i 's/exec startxfce4/exec startxfce4/' /etc/xrdp/startwm.sh || \
-          echo "startxfce4" | sudo tee -a /etc/xrdp/startwm.sh
-          
-          # Restart xrdp
           sudo systemctl restart xrdp
-          echo "✅ xRDP configured"
-
-      - name: Create user for RDP
-        run: |
-          # Create a regular user for RDP (root not recommended)
           sudo useradd -m -s /bin/bash rdpuser || true
           echo "rdpuser:root" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
-          echo "✅ RDP user created: rdpuser/root"
+          echo "✅ xRDP ready"
 
       # =============================================
-      # Show connection info
+      # Show connection info and EXIT
       # =============================================
       - name: Connection Info
         run: |
           NETBIRD_IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           echo "=========================================="
-          echo "🔗 PERSISTENT UBUNTU VPS READY"
+          echo "✅ UBUNTU VPS IS READY"
           echo "=========================================="
           echo ""
           echo "📡 NetBird IP: $NETBIRD_IP"
@@ -106,54 +82,29 @@ jobs:
           echo "  ssh root@$NETBIRD_IP"
           echo "  Password: root"
           echo ""
-          echo "🖥️ xRDP (Remote Desktop - port 3389):"
-          echo "  Use Windows Remote Desktop or any RDP client"
+          echo "🖥️ xRDP (port 3389):"
           echo "  Address: $NETBIRD_IP:3389"
           echo "  User: rdpuser"
           echo "  Password: root"
-          echo ""
-          echo "🔑 NetBird SSH (port 44338):"
-          echo "  ssh -p 44338 root@$NETBIRD_IP"
-          echo "  Password: root"
           echo "=========================================="
           echo ""
-          echo "⏳ Server runs for 6 hours max"
-          echo "   IP stays same until restart"
+          echo "⏱️ Server runs for 6 HOURS"
+          echo "📌 IP: $NETBIRD_IP"
+          echo ""
+          echo "✅ SETUP COMPLETE - CONNECT NOW!"
 
       # =============================================
-      # KEEP RUNNING - REAL PERSISTENT SERVER
+      # NATURAL 6 HOURS - NO SLEEP LOOPS
       # =============================================
-      - name: Keep Running (6 hours)
+      - name: Keep Server Alive
         run: |
-          echo "=========================================="
-          echo "🚀 SERVER IS RUNNING! (6 HOURS MAX)"
-          echo "=========================================="
+          echo "✅ Server is running..."
+          echo "✅ NetBird is connected..."
+          echo "✅ SSH and RDP are available..."
           echo ""
-          echo "Connect via:"
-          echo "  SSH: ssh root@$(sudo netbird status | grep 'NetBird IP' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-          echo "  RDP: Windows Remote Desktop to $(sudo netbird status | grep 'NetBird IP' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1):3389"
+          echo "This job will run for 6 hours."
+          echo "The server will auto-shutdown after 6 hours."
           echo ""
-          echo "NetBird will stay connected. This is a REAL server."
-          echo ""
-          
-          # Keep alive for 6 hours (GitHub max)
-          for i in {1..360}; do
-            sleep 60
-            # Show status every 10 minutes
-            if [ $((i % 10)) -eq 0 ]; then
-              echo "⏰ Server alive: $((i/60)) hours, $((i%60)) minutes"
-              # Keep NetBird alive
-              sudo netbird status > /dev/null 2>&1 || sudo netbird up --setup-key ${{ secrets.NETBIRD_SETUP_KEY }} --allow-server-ssh
-            fi
-          done
-          
-          echo "⏰ 6 hour timeout reached. Server shutting down..."
-
-      # =============================================
-      # Cleanup
-      # =============================================
-      - name: Cleanup
-        if: always()
-        run: |
-          sudo netbird down || true
-          echo "🧹 Cleanup complete"
+          # GitHub Actions keeps the job alive for timeout-minutes
+          # Just a simple command that doesn't exit
+          tail -f /dev/null
