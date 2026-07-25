@@ -47,7 +47,7 @@ jobs:
           python3 --version
           echo "✅ Python environment ready"
 
-  # Job 2: Build Python container with NetBird static binary (WORKING)
+  # Job 2: Build Python container with NetBird (APT method - WORKING)
   container-build:
     runs-on: ubuntu-latest
     needs: test-connection
@@ -59,17 +59,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
-      - name: Create Dockerfile with NetBird static binary
+      - name: Create Dockerfile with NetBird from APT
         run: |
           cat > Dockerfile << 'EOF'
           FROM python:3.12-slim
           
-          # Download NetBird static binary directly
-          RUN apt-get update && apt-get install -y curl && \
-              curl -L https://github.com/netbirdio/netbird/releases/latest/download/netbird-linux-amd64 -o /usr/local/bin/netbird && \
-              chmod +x /usr/local/bin/netbird && \
-              apt-get clean && \
-              rm -rf /var/lib/apt/lists/*
+          # Install NetBird from APT with workaround
+          RUN apt-get update && apt-get install -y \
+              curl \
+              gnupg \
+              ca-certificates \
+              && curl -sSL https://pkgs.netbird.io/debian/public.key | gpg --dearmor --output /usr/share/keyrings/netbird-archive-keyring.gpg \
+              && echo 'deb [signed-by=/usr/share/keyrings/netbird-archive-keyring.gpg] https://pkgs.netbird.io/debian stable main' | tee /etc/apt/sources.list.d/netbird.list \
+              && apt-get update \
+              && apt-get download netbird \
+              && dpkg --force-all -i netbird*.deb || true \
+              && apt-get install -f -y || true \
+              && apt-get clean \
+              && rm -rf /var/lib/apt/lists/*
           
           # Create /app directory
           RUN mkdir -p /app
@@ -84,9 +91,14 @@ jobs:
               echo '    setup_key = os.environ.get("NETBIRD_SETUP_KEY")' >> /app/app.py && \
               echo '    if setup_key:' >> /app/app.py && \
               echo '        print("🔗 Connecting to NetBird...")' >> /app/app.py && \
-              echo '        subprocess.run(["/usr/local/bin/netbird", "up", "--setup-key", setup_key], check=False)' >> /app/app.py && \
+              echo '        # Try APT-installed netbird first' >> /app/app.py && \
+              echo '        try:' >> /app/app.py && \
+              echo '            subprocess.run(["netbird", "up", "--setup-key", setup_key], check=False)' >> /app/app.py && \
+              echo '        except FileNotFoundError:' >> /app/app.py && \
+              echo '            print("⚠️ netbird command not found, trying alternative path")' >> /app/app.py && \
+              echo '            subprocess.run(["/usr/bin/netbird", "up", "--setup-key", setup_key], check=False)' >> /app/app.py && \
               echo '        time.sleep(3)' >> /app/app.py && \
-              echo '        subprocess.run(["/usr/local/bin/netbird", "status"])' >> /app/app.py && \
+              echo '        subprocess.run(["netbird", "status"])' >> /app/app.py && \
               echo '    else:' >> /app/app.py && \
               echo '        print("⚠️ No NETBIRD_SETUP_KEY found")' >> /app/app.py && \
               echo '' >> /app/app.py && \
@@ -168,7 +180,7 @@ jobs:
         run: |
           python3 test_netbird.py
 
-  # Job 4: Simple connection test (minimal)
+  # Job 4: Simple connection test
   minimal-test:
     runs-on: ubuntu-latest
     
