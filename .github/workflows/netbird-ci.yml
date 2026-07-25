@@ -1,7 +1,7 @@
 name: NetBird Persistent Runner with VNC
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
   push:
     branches: [ main, master ]
 
@@ -35,7 +35,29 @@ jobs:
           sudo netbird status
 
       # =============================================
-      # Set up SSH via NetBird
+      # Setup SSH with root login and password auth
+      # =============================================
+      - name: Setup SSH server
+        run: |
+          # Install SSH server if not present
+          sudo apt-get install -y openssh-server
+
+          # Set root password
+          echo "root:root" | sudo chpasswd
+
+          # Configure SSH to allow root login with password
+          sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+          # Restart SSH
+          sudo systemctl restart ssh || sudo service ssh restart
+
+          echo "✅ SSH configured with root/root login"
+
+      # =============================================
+      # Enable NetBird SSH (runs on port 44338)
       # =============================================
       - name: Enable NetBird SSH
         run: |
@@ -43,34 +65,74 @@ jobs:
           echo "🔑 NetBird SSH enabled on port 44338"
 
       # =============================================
-      # Install and configure VNC server
+      # Install and configure VNC server (FIXED)
       # =============================================
       - name: Install VNC and desktop
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y tigervnc-standalone-server tigervnc-common xfce4 xfce4-goodies dbus-x11
+          sudo apt-get install -y tigervnc-standalone-server tigervnc-common xfce4 xfce4-goodies dbus-x11 x11-utils
           echo "✅ VNC installed"
 
       - name: Configure VNC password
         run: |
           mkdir -p ~/.vnc
-          echo "netbird123" | vncpasswd -f > ~/.vnc/passwd
+          echo "root" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
 
-      - name: Create VNC startup script
+      - name: Create VNC startup script (FIXED)
         run: |
           cat > ~/.vnc/xstartup << 'EOF'
           #!/bin/sh
-          unset SESSION_MANAGER
-          unset DBUS_SESSION_BUS_ADDRESS
-          startxfce4 &
+          export XKL_XMODMAP_DISABLE=1
+          export XDG_CURRENT_DESKTOP="XFCE"
+          export XDG_MENU_PREFIX="xfce-"
+          export XDG_CONFIG_DIRS="/etc/xdg/xfce4:/etc/xdg"
+          export XDG_DATA_DIRS="/usr/share/xfce4:/usr/share"
+          
+          [ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
+          [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+          
+          # Start a simple window manager
+          xfce4-session &
           EOF
           chmod +x ~/.vnc/xstartup
 
-      - name: Start VNC server
+      - name: Start VNC server with xterm fallback
         run: |
-          vncserver :1 -geometry 1920x1080 -depth 24
-          echo "✅ VNC started on display :1 (port 5901)"
+          # Kill any existing VNC sessions
+          vncserver -kill :1 || true
+          
+          # Start with xterm first to test
+          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+          
+          # Wait and verify
+          sleep 3
+          if pgrep -f "Xtigervnc.*:1"; then
+            echo "✅ VNC started on display :1 (port 5901)"
+          else
+            echo "⚠️ VNC failed, trying fallback..."
+            vncserver -kill :1 || true
+            vncserver :1 -geometry 1280x720 -depth 16 -localhost no -xstartup /usr/bin/xterm
+          fi
+
+      - name: Verify VNC is running
+        run: |
+          echo "VNC Processes:"
+          ps aux | grep vnc | grep -v grep || echo "No VNC process found"
+          echo ""
+          echo "VNC Log:"
+          tail -20 ~/.vnc/*.log || echo "No log found"
+
+      # =============================================
+      # Open firewall ports (for GitHub runner)
+      # =============================================
+      - name: Configure firewall
+        run: |
+          # Allow SSH ports
+          sudo ufw allow 22/tcp || true
+          sudo ufw allow 44338/tcp || true
+          sudo ufw allow 5901/tcp || true
+          echo "✅ Firewall configured"
 
       # =============================================
       # Keep alive and show connection info
@@ -86,12 +148,21 @@ jobs:
           echo "📡 NetBird IP:"
           sudo netbird status | grep "NetBird IP"
           echo ""
-          echo "🔑 SSH: ssh runner@<NetBird-IP>"
-          echo "🖥️ VNC: vncviewer <NetBird-IP>:1"
-          echo "🔑 VNC Password: netbird123"
+          echo "🔑 SSH CONNECTION:"
+          echo "  ssh root@<NetBird-IP>"
+          echo "  Password: root"
+          echo ""
+          echo "🔑 SSH VIA NETBIRD (port 44338):"
+          echo "  ssh -p 44338 root@<NetBird-IP>"
+          echo "  Password: root"
+          echo ""
+          echo "🖥️ VNC CONNECTION:"
+          echo "  vncviewer <NetBird-IP>:1"
+          echo "  Password: root"
           echo "=========================================="
           echo ""
           echo "⏳ Keeping runner alive for 60 minutes..."
+          echo "⚠️  Use root/root to login"
 
       - name: Keep alive
         run: |
