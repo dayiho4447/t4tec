@@ -52,14 +52,14 @@ jobs:
           echo "✅ SSH enabled (root/root)"
 
       # =============================================
-      # Setup TigerVNC with XFCE (port 5901)
+      # Setup VNC with x11vnc and Xvfb (RELIABLE)
       # =============================================
-      - name: Install VNC and Desktop
+      - name: Install VNC packages
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
-            tigervnc-standalone-server \
-            tigervnc-common \
+            x11vnc \
+            xvfb \
             xfce4 \
             xfce4-goodies \
             dbus-x11 \
@@ -67,64 +67,64 @@ jobs:
             xauth
           echo "✅ VNC packages installed"
 
-      - name: Configure VNC
+      - name: Start Virtual Display
         run: |
-          mkdir -p ~/.vnc
-          echo "root" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 3
+          echo "✅ Virtual display :99 created"
 
-      - name: Create VNC startup script with XFCE
+      - name: Start Desktop Environment
         run: |
-          cat > ~/.vnc/xstartup << 'EOF'
-          #!/bin/sh
-          export XKL_XMODMAP_DISABLE=1
+          export DISPLAY=:99
           export XDG_CURRENT_DESKTOP="XFCE"
-          export XDG_MENU_PREFIX="xfce-"
           export XDG_CONFIG_DIRS="/etc/xdg/xfce4:/etc/xdg"
           export XDG_DATA_DIRS="/usr/share/xfce4:/usr/share"
-          export DISPLAY=:1
           
-          [ -x /etc/vnc/xstartup ] && exec /etc/vnc/xstartup
-          [ -r $HOME/.Xresources ] && xrdb $HOME/.Xresources
+          # Start session dbus
+          dbus-daemon --session --fork &
+          sleep 2
           
           # Start XFCE
           startxfce4 &
-          EOF
-          chmod +x ~/.vnc/xstartup
+          sleep 5
+          echo "✅ Desktop environment started"
 
-      - name: Start VNC Server
+      - name: Start x11vnc Server
         run: |
-          # Kill any existing session
-          vncserver -kill :1 || true
-          
-          # Start VNC with XFCE
-          vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
-          
-          # Verify it's running
+          export DISPLAY=:99
+          x11vnc -display :99 -forever -nopw -passwd root -shared -listen 0.0.0.0 &
           sleep 3
-          if pgrep -f "Xtigervnc.*:1"; then
-            echo "✅ VNC running on display :1 (port 5901)"
-          else
-            echo "⚠️ VNC failed, trying fallback..."
-            vncserver -kill :1 || true
-            # Fallback: just xterm
-            cat > ~/.vnc/xstartup << 'EOF'
-            #!/bin/sh
-            xterm &
-            EOF
-            chmod +x ~/.vnc/xstartup
-            vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
-          fi
+          echo "✅ x11vnc started on port 5900"
 
       - name: Verify VNC
         run: |
-          echo "VNC Processes:"
-          ps aux | grep -E "vnc|Xvnc|Xtigervnc" | grep -v grep || echo "⚠️ No VNC process"
+          echo "Running processes:"
+          ps aux | grep -E "Xvfb|x11vnc|xfce|dbus" | grep -v grep
           echo ""
-          echo "VNC Log (last 20 lines):"
-          tail -20 ~/.vnc/*.log 2>/dev/null || echo "No log found"
-          echo ""
-          netstat -tlnp 2>/dev/null | grep 5901 || echo "⚠️ Port 5901 not listening"
+          echo "Port 5900:"
+          netstat -tlnp 2>/dev/null | grep 5900 || echo "⚠️ Port 5900 not found, checking all ports..."
+          netstat -tlnp 2>/dev/null | grep -E "5900|5901|5902" || echo "No VNC ports found"
+
+      # =============================================
+      # Alternative: Simple VNC with x11vnc and xterm
+      # =============================================
+      - name: Start Simple VNC Fallback
+        if: failure()
+        run: |
+          export DISPLAY=:99
+          # Kill any existing
+          pkill -f Xvfb || true
+          pkill -f x11vnc || true
+          
+          # Start with xterm only
+          Xvfb :99 -screen 0 1280x720x24 &
+          sleep 3
+          DISPLAY=:99 xterm &
+          sleep 2
+          x11vnc -display :99 -forever -nopw -passwd root -shared -listen 0.0.0.0 &
+          sleep 3
+          echo "✅ Simple VNC started on port 5900"
 
       # =============================================
       # Show connection info
@@ -145,8 +145,8 @@ jobs:
           echo "  ssh root@$NETBIRD_IP"
           echo "  Password: root"
           echo ""
-          echo "🖥️ VNC (port 5901):"
-          echo "  vncviewer $NETBIRD_IP:1"
+          echo "🖥️ VNC (port 5900):"
+          echo "  vncviewer $NETBIRD_IP:5900"
           echo "  Password: root"
           echo "=========================================="
           echo ""
@@ -154,7 +154,7 @@ jobs:
 
       - name: Keep Alive (60 minutes)
         run: |
-          echo "⏳ Runner is alive! Press Ctrl+C to stop, or wait 60 minutes."
+          echo "⏳ Runner is alive! SSH and VNC available."
           echo ""
           for i in {1..12}; do
             echo "⏰ Alive: $((i*5)) minutes"
@@ -168,6 +168,8 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          vncserver -kill :1 || true
+          pkill -f Xvfb || true
+          pkill -f x11vnc || true
+          pkill -f startxfce4 || true
           sudo netbird down || true
           echo "🧹 Cleanup complete"
