@@ -1,4 +1,4 @@
-name: NetBird Persistent Runner with VNC
+name: NetBird Persistent Runner
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  netbird-persistent-runner:
+  netbird-runner:
     runs-on: ubuntu-latest
     
     steps:
@@ -14,7 +14,7 @@ jobs:
         uses: actions/checkout@v4
 
       # =============================================
-      # Install and connect NetBird
+      # Install NetBird
       # =============================================
       - name: Install NetBird
         run: |
@@ -25,19 +25,21 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y netbird
 
-      - name: Connect to NetBird
+      # =============================================
+      # Connect NetBird
+      # =============================================
+      - name: Connect NetBird
         env:
           NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
         run: |
           sudo netbird up --setup-key $NETBIRD_SETUP_KEY --allow-server-ssh &
           sleep 5
           echo "✅ NetBird connected!"
-          sudo netbird status
 
       # =============================================
-      # Setup SSH with root login
+      # Setup SSH (port 22, root/root)
       # =============================================
-      - name: Setup SSH server
+      - name: Setup SSH
         run: |
           sudo apt-get install -y openssh-server
           echo "root:root" | sudo chpasswd
@@ -45,66 +47,24 @@ jobs:
           sudo sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          sudo systemctl restart ssh || sudo service ssh restart
-          echo "✅ SSH configured with root/root"
-
-      - name: Enable NetBird SSH
-        run: |
-          sudo netbird up --allow-server-ssh
-          echo "🔑 NetBird SSH enabled"
+          sudo systemctl restart ssh
+          echo "✅ SSH enabled (root/root)"
 
       # =============================================
-      # Setup VNC with x11vnc (MORE RELIABLE)
+      # Setup TigerVNC (port 5901)
       # =============================================
-      - name: Install VNC and desktop
+      - name: Setup TigerVNC
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y x11vnc xvfb xfce4 xfce4-goodies dbus-x11 x11-utils
-          echo "✅ VNC packages installed"
-
-      - name: Setup virtual display
-        run: |
-          # Create virtual display
-          export DISPLAY=:99
-          Xvfb :99 -screen 0 1920x1080x24 &
-          sleep 3
-          echo "✅ Virtual display :99 created"
-
-      - name: Start desktop environment
-        run: |
-          export DISPLAY=:99
-          # Start XFCE in background
-          startxfce4 &
-          sleep 5
-          echo "✅ Desktop environment started"
-
-      - name: Start x11vnc server
-        run: |
-          export DISPLAY=:99
-          # Start x11vnc with password
-          x11vnc -display :99 -forever -nopw -passwd root -shared -listen 0.0.0.0 &
-          sleep 3
-          echo "✅ x11vnc started on port 5900"
-
-      - name: Verify VNC is running
-        run: |
-          echo "VNC Processes:"
-          ps aux | grep -E "vnc|Xvfb|xfce" | grep -v grep || echo "No process found"
-          echo ""
-          netstat -tlnp | grep 5900 || echo "Port 5900 not listening"
-
-      # =============================================
-      # Alternative: Start TigerVNC with minimal config
-      # =============================================
-      - name: Start TigerVNC as fallback
-        if: failure()
-        run: |
-          sudo apt-get install -y tigervnc-standalone-server
+          sudo apt-get install -y tigervnc-standalone-server tigervnc-common
+          
+          # Create VNC directory
           mkdir -p ~/.vnc
+          
+          # Set password to 'root'
           echo "root" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
           
-          # Simple xterm-based VNC
+          # Simple startup script
           cat > ~/.vnc/xstartup << 'EOF'
           #!/bin/sh
           xrdb $HOME/.Xresources
@@ -114,55 +74,40 @@ jobs:
           EOF
           chmod +x ~/.vnc/xstartup
           
-          vncserver :1 -geometry 1920x1080 -depth 24
-          echo "✅ Fallback VNC started"
+          # Start VNC on display :1 (port 5901)
+          vncserver :1 -geometry 1280x720 -depth 24
+          echo "✅ VNC started on port 5901"
 
       # =============================================
-      # Open firewall ports
-      # =============================================
-      - name: Configure firewall
-        run: |
-          sudo ufw allow 22/tcp || true
-          sudo ufw allow 44338/tcp || true
-          sudo ufw allow 5900/tcp || true
-          sudo ufw allow 5901/tcp || true
-          echo "✅ Firewall configured"
-
-      # =============================================
-      # Keep alive and show connection info
+      # Show connection info
       # =============================================
       - name: Connection Info
         run: |
+          NETBIRD_IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          
           echo "=========================================="
           echo "🔗 NETBIRD RUNNER READY"
           echo "=========================================="
           echo ""
-          sudo netbird status
-          echo ""
-          NETBIRD_IP=$(sudo netbird status | grep "NetBird IP" | awk '{print $NF}')
           echo "📡 NetBird IP: $NETBIRD_IP"
           echo ""
-          echo "🔑 SSH CONNECTION:"
+          echo "🔑 SSH:"
           echo "  ssh root@$NETBIRD_IP"
           echo "  Password: root"
           echo ""
-          echo "🔑 SSH VIA NETBIRD:"
-          echo "  ssh -p 44338 root@$NETBIRD_IP"
-          echo "  Password: root"
-          echo ""
-          echo "🖥️ VNC CONNECTION:"
-          echo "  vncviewer $NETBIRD_IP:0 (for x11vnc)"
-          echo "  Password: root"
-          echo "  OR"
-          echo "  vncviewer $NETBIRD_IP:1 (for TigerVNC)"
+          echo "🖥️ VNC:"
+          echo "  vncviewer $NETBIRD_IP:1"
           echo "  Password: root"
           echo "=========================================="
           echo ""
-          echo "⏳ Keeping runner alive for 60 minutes..."
+          echo "⏳ Runner stays alive for 60 minutes"
 
-      - name: Keep alive
+      - name: Keep Alive (60 minutes)
         run: |
-          sleep 3600
+          for i in {1..12}; do
+            echo "⏰ Alive: $((i*5)) minutes"
+            sleep 300
+          done
           echo "⏰ Timeout reached"
 
       # =============================================
@@ -171,8 +116,6 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          pkill -f Xvfb || true
-          pkill -f x11vnc || true
           vncserver -kill :1 || true
           sudo netbird down || true
           echo "🧹 Cleanup complete"
