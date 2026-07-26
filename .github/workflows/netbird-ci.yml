@@ -150,7 +150,7 @@ jobs:
           sudo systemctl enable xrdp
 
       # ============================================
-      # 8. CONFIGURE VNC (TurboVNC)
+      # 8. CONFIGURE TURBOVNC (FIXED SYNTAX)
       # ============================================
       - name: Configure TurboVNC
         run: |
@@ -158,11 +158,15 @@ jobs:
           echo "rdpuser:root" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
 
+          # Create VNC directory
           sudo -u rdpuser mkdir -p /home/rdpuser/.vnc
+
+          # Set VNC password
           echo "root" | sudo -u rdpuser /opt/TurboVNC/bin/vncpasswd -f > /home/rdpuser/.vnc/passwd
           sudo chmod 600 /home/rdpuser/.vnc/passwd
           sudo chown -R rdpuser:rdpuser /home/rdpuser/.vnc
 
+          # Create xstartup for GNOME
           sudo -u rdpuser tee /home/rdpuser/.vnc/xstartup > /dev/null << 'EOF'
           #!/bin/sh
           export XDG_CURRENT_DESKTOP="GNOME"
@@ -173,7 +177,10 @@ jobs:
           exec gnome-session
           EOF
           sudo -u rdpuser chmod +x /home/rdpuser/.vnc/xstartup
-          sudo -u rdpuser /opt/TurboVNC/bin/vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
+
+          # Start TurboVNC on display :1 (port 5901)
+          # TurboVNC uses -allow to allow remote connections (instead of -localhost no)
+          sudo -u rdpuser /opt/TurboVNC/bin/vncserver :1 -geometry 1920x1080 -depth 24 -allow
 
       # ============================================
       # 9. VERIFY SERVICES
