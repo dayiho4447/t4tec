@@ -1,4 +1,4 @@
-name: Ubuntu VPS
+name: Ubuntu VPS - Full GNOME
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 1440
+    timeout-minutes: 360
     
     steps:
       - uses: actions/checkout@v4
@@ -30,17 +30,31 @@ jobs:
           sleep 5
           sudo netbird status
 
-      - name: Install SSH, RDP, VNC
+      - name: Install GNOME, RDP, VNC (No NetworkManager)
         run: |
           sudo apt-get update -y
           sudo apt-get install -y \
             openssh-server \
             xrdp \
-            xfce4 \
-            xfce4-goodies \
+            x11vnc \
+            xvfb \
+            gnome-session \
+            gnome-shell \
+            gnome-terminal \
+            nautilus \
+            gnome-tweaks \
+            gnome-control-center \
             dbus-x11 \
+            x11-utils \
             tigervnc-standalone-server \
-            tigervnc-common
+            tigervnc-common \
+            --no-install-recommends
+
+          # Mask NetworkManager if it sneaks in
+          if systemctl list-units --full -all | grep -q network-manager; then
+            sudo systemctl stop network-manager 2>/dev/null || true
+            sudo systemctl mask network-manager 2>/dev/null || true
+          fi
 
       - name: Configure SSH (root/root)
         run: |
@@ -51,31 +65,55 @@ jobs:
           sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo systemctl restart ssh
 
-      - name: Configure xRDP (rdpuser/root)
+      - name: Configure xRDP → Full GNOME
         run: |
-          echo "xfce4-session" > ~/.xsession
-          sudo systemctl restart xrdp
           sudo useradd -m -s /bin/bash rdpuser || true
           echo "rdpuser:root" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
 
-      - name: Configure VNC (root)
-        run: |
-          mkdir -p ~/.vnc
-          echo "root" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          cat > ~/.vnc/xstartup << 'EOF'
+          sudo tee /etc/xrdp/startwm.sh > /dev/null << 'EOF'
           #!/bin/sh
-          startxfce4 &
+          . /etc/profile
+          export HOME=/home/rdpuser
+          export XDG_CURRENT_DESKTOP="GNOME"
+          export XDG_MENU_PREFIX="gnome-"
+          export GNOME_SHELL_SESSION_MODE="ubuntu"
+          exec gnome-session
           EOF
-          chmod +x ~/.vnc/xstartup
-          vncserver :1 -geometry 1920x1080 -depth 24 &
+          sudo chmod +x /etc/xrdp/startwm.sh
+          sudo systemctl restart xrdp
+
+      - name: Configure VNC → Full GNOME (port 5901)
+        run: |
+          sudo -u rdpuser mkdir -p /home/rdpuser/.vnc
+          echo "root" | sudo -u rdpuser vncpasswd -f > /home/rdpuser/.vnc/passwd
+          sudo chmod 600 /home/rdpuser/.vnc/passwd
+
+          sudo -u rdpuser tee /home/rdpuser/.vnc/xstartup > /dev/null << 'EOF'
+          #!/bin/sh
+          export XDG_CURRENT_DESKTOP="GNOME"
+          export XDG_MENU_PREFIX="gnome-"
+          export GNOME_SHELL_SESSION_MODE="ubuntu"
+          exec gnome-session
+          EOF
+          sudo -u rdpuser chmod +x /home/rdpuser/.vnc/xstartup
+
+          # Start VNC via Xvfb + x11vnc (runs as rdpuser)
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 3
+          sudo -u rdpuser DISPLAY=:99 gnome-session &
+          sleep 6
+          sudo -u rdpuser x11vnc -display :99 -rfbport 5901 -forever -nopw -passwd root -shared -listen 0.0.0.0 &
+
+          # Disable PolicyKit auth checks (optional)
+          sudo sed -i 's/^#*Auth      :.*$/Auth      : no/' /etc/dbus-1/system.d/org.freedesktop.PolicyKit1.conf 2>/dev/null || true
+          sudo systemctl restart dbus 2>/dev/null || true
 
       - name: Connection Info
         run: |
           IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           echo "=========================================="
-          echo "✅ UBUNTU VPS READY"
+          echo "✅ UBUNTU VPS READY - FULL GNOME"
           echo "=========================================="
           echo ""
           echo "📡 NetBird IP: $IP"
@@ -88,28 +126,32 @@ jobs:
           echo "  Address: $IP:3389"
           echo "  User: rdpuser"
           echo "  Password: root"
+          echo "  → Desktop: Full GNOME"
           echo ""
           echo "🖥️ VNC (port 5901):"
           echo "  vncviewer $IP:5901"
           echo "  Password: root"
+          echo "  → Desktop: Full GNOME"
           echo "=========================================="
           echo ""
-          echo "⏱️ Server runs for 24 HOURS"
+          echo "⏱️ Server runs for 6 HOURS"
           echo "📌 Auto-starts on commit to main/master"
+          echo "✅ NetworkManager is DISABLED - NetBird stays connected"
           echo "✅ You can do other work now!"
 
-      - name: Keep Alive (24 hours)
+      - name: Keep Alive (6 hours)
         run: |
           echo "=========================================="
-          echo "🚀 SERVER IS RUNNING"
+          echo "🚀 SERVER IS RUNNING - FULL GNOME"
           echo "=========================================="
           echo ""
           echo "✅ NetBird connected"
           echo "✅ SSH running on port 22"
-          echo "✅ xRDP running on port 3389"
-          echo "✅ VNC running on port 5901"
+          echo "✅ xRDP running on port 3389 (GNOME)"
+          echo "✅ VNC running on port 5901 (GNOME)"
+          echo "✅ NetworkManager is DISABLED"
           echo ""
-          echo "⏳ Keeping alive for 24 hours..."
-          echo "   GitHub will auto-stop after 24 hours"
+          echo "⏳ Keeping alive for 6 hours..."
+          echo "   GitHub will auto-stop after 6 hours"
           echo ""
           tail -f /dev/null
