@@ -60,6 +60,7 @@ jobs:
             ubuntu-desktop \
             xrdp \
             openssh-server \
+            dbus-x11 \
             net-tools \
             iputils-ping \
             dnsutils \
@@ -126,8 +127,9 @@ jobs:
           # Allow root login via RDP
           sudo sed -i 's/^.*allowed_users=.*$/allowed_users=anybody/' /etc/X11/Xwrapper.config
           
-          # Create root .xsession
-          echo "gnome-session" > /root/.xsession
+          # Create root .xsession with proper permissions
+          echo "gnome-session" | sudo tee /root/.xsession
+          sudo chmod 644 /root/.xsession
 
           sudo tee /etc/xrdp/startwm.sh > /dev/null << 'EOF'
           #!/bin/sh
@@ -196,7 +198,7 @@ jobs:
         run: |
           IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           echo "=========================================="
-          echo "✅ UBUNTU VPS - FULL DESKTOP + TURBOVNC"
+          echo "✅ UBUNTU VPS - FULL GNOME + TURBOVNC"
           echo "=========================================="
           echo ""
           echo "📡 NetBird IP: $IP"
@@ -209,12 +211,12 @@ jobs:
           echo "  Address: $IP:3389"
           echo "  User: root"
           echo "  Password: root"
-          echo "  → Full Ubuntu GNOME Desktop (ROOT)"
+          echo "  → Full GNOME Desktop"
           echo ""
           echo "🖥️ TurboVNC (port 5901):"
           echo "  vncviewer $IP:5901"
           echo "  Password: root"
-          echo "  → Full Ubuntu GNOME Desktop (ROOT)"
+          echo "  → Full GNOME Desktop"
           echo ""
           echo "📦 Network Tools: net-tools, ping, dig, traceroute"
           echo "  curl, wget, iperf3, tcpdump, nmap, mtr"
@@ -232,15 +234,15 @@ jobs:
       - name: Keep Alive (6 hours)
         run: |
           echo "=========================================="
-          echo "🚀 SERVER RUNNING - FULL DESKTOP"
+          echo "🚀 SERVER RUNNING - FULL GNOME"
           echo "=========================================="
           echo ""
           echo "✅ NetBird: CONNECTED"
           echo "✅ SSH: ACTIVE (root/root)"
           echo "✅ xRDP: ACTIVE (root/root on 3389)"
           echo "✅ TurboVNC: ACTIVE (root/root on 5901)"
+          echo "✅ Both show FULL GNOME desktop"
           echo "✅ Network Tools: INSTALLED"
-          echo "✅ ALL SERVICES USE root/root"
           echo ""
           echo "⏳ Keeping alive for 6 hours..."
           tail -f /dev/null
