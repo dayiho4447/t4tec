@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 1440
     
     steps:
       - uses: actions/checkout@v4
@@ -94,11 +94,11 @@ jobs:
           echo "  Password: root"
           echo "=========================================="
           echo ""
-          echo "⏱️ Server runs for 6 HOURS"
+          echo "⏱️ Server runs for 24 HOURS"
           echo "📌 Auto-starts on commit to main/master"
           echo "✅ You can do other work now!"
 
-      - name: Keep Alive (6 hours)
+      - name: Keep Alive (24 hours)
         run: |
           echo "=========================================="
           echo "🚀 SERVER IS RUNNING"
@@ -109,7 +109,7 @@ jobs:
           echo "✅ xRDP running on port 3389"
           echo "✅ VNC running on port 5901"
           echo ""
-          echo "⏳ Keeping alive for 6 hours..."
-          echo "   GitHub will auto-stop after 6 hours"
+          echo "⏳ Keeping alive for 24 hours..."
+          echo "   GitHub will auto-stop after 24 hours"
           echo ""
           tail -f /dev/null
