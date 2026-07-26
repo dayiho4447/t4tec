@@ -1,4 +1,4 @@
-name: Ubuntu VPS - Ultimate GNOME
+name: Ubuntu VPS - TurboVNC GNOME
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    
+
     steps:
       - uses: actions/checkout@v4
 
@@ -37,33 +37,26 @@ jobs:
           sudo netbird status
 
       # ============================================
-      # 3. CONFIGURE NETWORKMANAGER (BEST PRACTICE)
+      # 3. CONFIGURE NETWORKMANAGER
       # ============================================
-      - name: Configure NetworkManager - Ignore NetBird Interface
+      - name: Configure NetworkManager
         run: |
-          # Create config to ignore wt0 interface
           sudo mkdir -p /etc/NetworkManager/conf.d
           sudo tee /etc/NetworkManager/conf.d/99-netbird-unmanaged.conf << 'EOF'
           [keyfile]
           unmanaged-devices=interface-name:wt0
           EOF
-          
-          # Restart NetworkManager to apply
           sudo systemctl restart NetworkManager 2>/dev/null || true
-          
-          # Mask interfering services
           sudo systemctl mask systemd-networkd-wait-online 2>/dev/null || true
-          
-          echo "✅ NetBird interface (wt0) is now unmanaged by NetworkManager"
 
       # ============================================
-      # 4. INSTALL EVERYTHING (CLEAN & COMPLETE)
+      # 4. INSTALL GNOME + TURBOVNC
       # ============================================
-      - name: Install GNOME, RDP, VNC + Network Tools
+      - name: Install GNOME, RDP, and TurboVNC
         run: |
           sudo apt-get update -y
-          
-          # Install core GNOME and remote access (clean install)
+
+          # Install GNOME and RDP (same as before)
           sudo apt-get install -y \
             ubuntu-desktop-minimal \
             gnome-session \
@@ -73,18 +66,9 @@ jobs:
             gnome-tweaks \
             gnome-control-center \
             xrdp \
-            x11vnc \
-            xvfb \
             openssh-server \
             dbus-x11 \
-            x11-utils \
-            tigervnc-standalone-server \
-            tigervnc-common \
             policykit-1 \
-            --no-install-recommends
-
-          # Install ALL network tools
-          sudo apt-get install -y \
             net-tools \
             iputils-ping \
             dnsutils \
@@ -104,22 +88,26 @@ jobs:
             conntrack \
             iptables \
             nftables \
-            tshark \
             openvpn \
             wireguard \
-            network-manager-openvpn \
-            openconnect \
-            vpnc \
             rsync \
             screen \
             tmux \
             htop \
             ncdu \
             git \
-            vim
+            vim \
+            --no-install-recommends
+
+          # Download and install the latest TurboVNC .deb package
+          # Find latest version from: https://github.com/TurboVNC/turbovnc/releases
+          TURBOVNC_VERSION="3.3-20260206"  # Update this to the latest version if needed
+          wget -O /tmp/turbovnc_${TURBOVNC_VERSION}_amd64.deb \
+            https://github.com/TurboVNC/turbovnc/releases/download/${TURBOVNC_VERSION}/turbovnc_${TURBOVNC_VERSION}_amd64.deb
+          sudo apt-get install -y /tmp/turbovnc_${TURBOVNC_VERSION}_amd64.deb
 
       # ============================================
-      # 5. CONFIGURE SSH (ROOT/ROOT)
+      # 5. CONFIGURE SSH
       # ============================================
       - name: Configure SSH
         run: |
@@ -131,16 +119,14 @@ jobs:
           sudo systemctl restart ssh
 
       # ============================================
-      # 6. CONFIGURE RDP → FULL GNOME
+      # 6. CONFIGURE RDP
       # ============================================
       - name: Configure RDP (xRDP → GNOME)
         run: |
-          # Create rdpuser
           sudo useradd -m -s /bin/bash rdpuser 2>/dev/null || true
           echo "rdpuser:root" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
 
-          # Configure xrdp to launch GNOME
           sudo tee /etc/xrdp/startwm.sh > /dev/null << 'EOF'
           #!/bin/sh
           . /etc/profile
@@ -151,65 +137,57 @@ jobs:
           exec gnome-session
           EOF
           sudo chmod +x /etc/xrdp/startwm.sh
-          
-          # Restart xrdp
           sudo systemctl restart xrdp
           sudo systemctl enable xrdp
 
       # ============================================
-      # 7. CONFIGURE VNC → FULL GNOME (PORT 5901)
+      # 7. CONFIGURE TURBOVNC ON PORT 5901
       # ============================================
-      - name: Configure VNC (x11vnc → GNOME)
+      - name: Configure TurboVNC (port 5901)
         run: |
-          # Create VNC directory for rdpuser
-          sudo -u rdpuser mkdir -p /home/rdpuser/.vnc
-          
-          # Set VNC password (using rdpuser)
-          echo "root" | sudo -u rdpuser vncpasswd -f > /home/rdpuser/.vnc/passwd
+          # Create rdpuser if not exists
+          sudo useradd -m -s /bin/bash rdpuser 2>/dev/null || true
+          echo "rdpuser:root" | sudo chpasswd
+          sudo usermod -aG sudo rdpuser
+
+          # Set the VNC password for rdpuser
+          echo "root" | sudo -u rdpuser /opt/TurboVNC/bin/vncpasswd -f > /home/rdpuser/.vnc/passwd
           sudo chmod 600 /home/rdpuser/.vnc/passwd
           sudo chown -R rdpuser:rdpuser /home/rdpuser/.vnc
 
-          # Create VNC startup script for GNOME
+          # Create the xstartup script for GNOME
           sudo -u rdpuser tee /home/rdpuser/.vnc/xstartup > /dev/null << 'EOF'
           #!/bin/sh
           export XDG_CURRENT_DESKTOP="GNOME"
           export XDG_MENU_PREFIX="gnome-"
           export GNOME_SHELL_SESSION_MODE="ubuntu"
           unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
           exec gnome-session
           EOF
           sudo -u rdpuser chmod +x /home/rdpuser/.vnc/xstartup
 
-          # Start VNC with Xvfb + x11vnc (bulletproof)
-          Xvfb :99 -screen 0 1920x1080x24 &
-          sleep 3
-          sudo -u rdpuser DISPLAY=:99 gnome-session &
-          sleep 6
-          sudo -u rdpuser x11vnc -display :99 -rfbport 5901 -forever -nopw -passwd root -shared -listen 0.0.0.0 &
+          # Start TurboVNC on display :1 (port 5901)
+          sudo -u rdpuser /opt/TurboVNC/bin/vncserver :1 -geometry 1920x1080 -depth 24 -localhost no
 
-          # Fix PolicyKit (optional)
-          sudo sed -i 's/^#*Auth      :.*$/Auth      : no/' /etc/dbus-1/system.d/org.freedesktop.PolicyKit1.conf 2>/dev/null || true
-          sudo systemctl restart dbus 2>/dev/null || true
+          echo "✅ TurboVNC is running on display :1 (port 5901)"
 
       # ============================================
-      # 8. VERIFY ALL SERVICES
+      # 8. VERIFY SERVICES
       # ============================================
       - name: Verify Services
         run: |
-          echo "=== SSH Status ==="
+          echo "=== SSH ==="
           sudo systemctl status ssh --no-pager | head -3
           echo ""
-          echo "=== xRDP Status ==="
+          echo "=== xRDP ==="
           sudo systemctl status xrdp --no-pager | head -3
           echo ""
-          echo "=== VNC (x11vnc) Status ==="
-          ps aux | grep x11vnc | grep -v grep || echo "⚠️ x11vnc not running"
+          echo "=== TurboVNC ==="
+          /opt/TurboVNC/bin/vncserver -list
           echo ""
-          echo "=== NetBird Status ==="
+          echo "=== NetBird ==="
           sudo netbird status
-          echo ""
-          echo "=== NetworkManager Configuration ==="
-          sudo cat /etc/NetworkManager/conf.d/99-netbird-unmanaged.conf
 
       # ============================================
       # 9. CONNECTION INFO
@@ -218,7 +196,7 @@ jobs:
         run: |
           IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           echo "=========================================="
-          echo "✅ ULTIMATE UBUNTU VPS - FULL GNOME"
+          echo "✅ UBUNTU VPS - TURBOVNC + GNOME"
           echo "=========================================="
           echo ""
           echo "📡 NetBird IP: $IP"
@@ -231,41 +209,34 @@ jobs:
           echo "  Address: $IP:3389"
           echo "  User: rdpuser"
           echo "  Password: root"
-          echo "  → Full GNOME Desktop"
           echo ""
-          echo "🖥️ VNC (port 5901):"
+          echo "🖥️ TurboVNC (port 5901):"
           echo "  vncviewer $IP:5901"
           echo "  Password: root"
-          echo "  → Full GNOME Desktop"
           echo ""
-          echo "📦 Installed Network Tools:"
-          echo "  net-tools, ping, dig, traceroute, curl, wget"
-          echo "  iperf3, tcpdump, nmap, mtr, whois, telnet"
-          echo "  netcat, socat, openvpn, wireguard"
-          echo "  rsync, screen, tmux, htop, ncdu, git"
+          echo "📦 Network Tools: net-tools, ping, dig, traceroute"
+          echo "  curl, wget, iperf3, tcpdump, nmap, mtr"
+          echo "  telnet, netcat, openvpn, wireguard"
+          echo "  screen, tmux, htop, git, vim"
           echo ""
           echo "🔧 NetworkManager: RUNNING - wt0 UNMANAGED"
           echo "⏱️ Server runs for 6 HOURS"
-          echo "📌 Auto-starts on commit to main/master"
           echo "=========================================="
 
       # ============================================
-      # 10. KEEP ALIVE (6 HOURS)
+      # 10. KEEP ALIVE
       # ============================================
       - name: Keep Alive (6 hours)
         run: |
           echo "=========================================="
-          echo "🚀 SERVER RUNNING - ALL SYSTEMS GO"
+          echo "🚀 SERVER RUNNING - TURBOVNC MODE"
           echo "=========================================="
           echo ""
-          echo "✅ NetBird: CONNECTED (wt0 unmanaged)"
+          echo "✅ NetBird: CONNECTED"
           echo "✅ SSH: ACTIVE (root/root)"
           echo "✅ xRDP: ACTIVE (GNOME on 3389)"
-          echo "✅ VNC: ACTIVE (GNOME on 5901)"
+          echo "✅ TurboVNC: ACTIVE (GNOME on 5901)"
           echo "✅ Network Tools: INSTALLED"
-          echo "✅ NetworkManager: RUNNING"
           echo ""
           echo "⏳ Keeping alive for 6 hours..."
-          echo "   GitHub auto-stops after 6 hours"
-          echo ""
           tail -f /dev/null
