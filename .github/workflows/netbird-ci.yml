@@ -1,4 +1,4 @@
-name: Ubuntu VPS - TurboVNC GNOME
+name: Ubuntu VPS - Ultimate GNOME
 
 on:
   push:
@@ -49,11 +49,13 @@ jobs:
           sudo systemctl restart NetworkManager 2>/dev/null || true
 
       # ============================================
-      # 4. INSTALL CORE PACKAGES
+      # 4. INSTALL GNOME + RDP + VNC (x11vnc)
       # ============================================
-      - name: Install GNOME Core + RDP
+      - name: Install GNOME, RDP, VNC
         run: |
           sudo apt-get update -y
+          
+          # Install GNOME core components
           sudo apt-get install -y \
             gnome-session \
             gnome-shell \
@@ -64,6 +66,8 @@ jobs:
             xorg \
             xinit \
             xrdp \
+            x11vnc \
+            xvfb \
             openssh-server \
             dbus-x11 \
             x11-utils \
@@ -99,24 +103,7 @@ jobs:
             --no-install-recommends
 
       # ============================================
-      # 5. INSTALL LATEST TURBOVNC
-      # ============================================
-      - name: Install TurboVNC
-        run: |
-          LATEST_URL=$(curl -s https://api.github.com/repos/TurboVNC/turbovnc/releases/latest | grep "browser_download_url.*amd64.deb" | cut -d '"' -f 4)
-          if [ -z "$LATEST_URL" ]; then
-            echo "❌ Could not find TurboVNC. Installing x11vnc fallback..."
-            sudo apt-get install -y x11vnc xvfb
-            exit 0
-          fi
-          echo "✅ Downloading: $LATEST_URL"
-          wget -O /tmp/turbovnc_latest_amd64.deb "$LATEST_URL"
-          sudo apt-get install -y /tmp/turbovnc_latest_amd64.deb
-          sudo ln -sf /opt/TurboVNC/bin/* /usr/local/bin/ 2>/dev/null || true
-          echo "✅ TurboVNC installed"
-
-      # ============================================
-      # 6. CONFIGURE SSH
+      # 5. CONFIGURE SSH
       # ============================================
       - name: Configure SSH
         run: |
@@ -128,7 +115,7 @@ jobs:
           sudo systemctl restart ssh
 
       # ============================================
-      # 7. CONFIGURE RDP
+      # 6. CONFIGURE RDP (GNOME)
       # ============================================
       - name: Configure RDP
         run: |
@@ -150,40 +137,31 @@ jobs:
           sudo systemctl enable xrdp
 
       # ============================================
-      # 8. CONFIGURE TURBOVNC (FIXED SYNTAX)
+      # 7. CONFIGURE VNC (x11vnc - BULLETPROOF)
       # ============================================
-      - name: Configure TurboVNC
+      - name: Configure VNC
         run: |
           sudo useradd -m -s /bin/bash rdpuser 2>/dev/null || true
           echo "rdpuser:root" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
 
-          # Create VNC directory
-          sudo -u rdpuser mkdir -p /home/rdpuser/.vnc
+          # Start Xvfb on display :99
+          Xvfb :99 -screen 0 1920x1080x24 &
+          sleep 3
 
-          # Set VNC password
-          echo "root" | sudo -u rdpuser /opt/TurboVNC/bin/vncpasswd -f > /home/rdpuser/.vnc/passwd
-          sudo chmod 600 /home/rdpuser/.vnc/passwd
-          sudo chown -R rdpuser:rdpuser /home/rdpuser/.vnc
+          # Start GNOME on that display
+          sudo -u rdpuser DISPLAY=:99 gnome-session &
+          sleep 6
 
-          # Create xstartup for GNOME
-          sudo -u rdpuser tee /home/rdpuser/.vnc/xstartup > /dev/null << 'EOF'
-          #!/bin/sh
-          export XDG_CURRENT_DESKTOP="GNOME"
-          export XDG_MENU_PREFIX="gnome-"
-          export GNOME_SHELL_SESSION_MODE="ubuntu"
-          unset SESSION_MANAGER
-          unset DBUS_SESSION_BUS_ADDRESS
-          exec gnome-session
-          EOF
-          sudo -u rdpuser chmod +x /home/rdpuser/.vnc/xstartup
+          # Start x11vnc on port 5901
+          sudo -u rdpuser x11vnc -display :99 -rfbport 5901 -forever -nopw -passwd root -shared -listen 0.0.0.0 &
 
-          # Start TurboVNC on display :1 (port 5901)
-          # TurboVNC uses -allow to allow remote connections (instead of -localhost no)
-          sudo -u rdpuser /opt/TurboVNC/bin/vncserver :1 -geometry 1920x1080 -depth 24 -allow
+          # Fix PolicyKit
+          sudo sed -i 's/^#*Auth      :.*$/Auth      : no/' /etc/dbus-1/system.d/org.freedesktop.PolicyKit1.conf 2>/dev/null || true
+          sudo systemctl restart dbus 2>/dev/null || true
 
       # ============================================
-      # 9. VERIFY SERVICES
+      # 8. VERIFY SERVICES
       # ============================================
       - name: Verify Services
         run: |
@@ -193,20 +171,20 @@ jobs:
           echo "=== xRDP ==="
           sudo systemctl status xrdp --no-pager | head -3
           echo ""
-          echo "=== TurboVNC ==="
-          /opt/TurboVNC/bin/vncserver -list
+          echo "=== VNC (x11vnc) ==="
+          ps aux | grep x11vnc | grep -v grep || echo "x11vnc not running"
           echo ""
           echo "=== NetBird ==="
           sudo netbird status
 
       # ============================================
-      # 10. CONNECTION INFO
+      # 9. CONNECTION INFO
       # ============================================
       - name: Connection Info
         run: |
           IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           echo "=========================================="
-          echo "✅ UBUNTU VPS - TURBOVNC + GNOME"
+          echo "✅ UBUNTU VPS - FULL GNOME + x11vnc"
           echo "=========================================="
           echo ""
           echo "📡 NetBird IP: $IP"
@@ -219,32 +197,35 @@ jobs:
           echo "  Address: $IP:3389"
           echo "  User: rdpuser"
           echo "  Password: root"
+          echo "  → Full GNOME Desktop"
           echo ""
-          echo "🖥️ TurboVNC (port 5901):"
+          echo "🖥️ VNC (port 5901):"
           echo "  vncviewer $IP:5901"
           echo "  Password: root"
+          echo "  → Full GNOME Desktop (x11vnc + Xvfb)"
           echo ""
-          echo "📦 Network Tools: net-tools, ping, dig, traceroute, curl, wget"
-          echo "  iperf3, tcpdump, nmap, mtr, telnet, netcat, openvpn"
-          echo "  wireguard, screen, tmux, htop, git, vim"
+          echo "📦 Network Tools: net-tools, ping, dig, traceroute"
+          echo "  curl, wget, iperf3, tcpdump, nmap, mtr"
+          echo "  telnet, netcat, openvpn, wireguard"
+          echo "  screen, tmux, htop, git, vim"
           echo ""
           echo "🔧 NetworkManager: RUNNING - wt0 UNMANAGED"
           echo "⏱️ Server runs for 6 HOURS"
           echo "=========================================="
 
       # ============================================
-      # 11. KEEP ALIVE
+      # 10. KEEP ALIVE
       # ============================================
       - name: Keep Alive (6 hours)
         run: |
           echo "=========================================="
-          echo "🚀 SERVER RUNNING - TURBOVNC MODE"
+          echo "🚀 SERVER RUNNING - ALL SYSTEMS GO"
           echo "=========================================="
           echo ""
           echo "✅ NetBird: CONNECTED"
           echo "✅ SSH: ACTIVE (root/root)"
           echo "✅ xRDP: ACTIVE (GNOME on 3389)"
-          echo "✅ TurboVNC: ACTIVE (GNOME on 5901)"
+          echo "✅ VNC: ACTIVE (GNOME on 5901)"
           echo "✅ Network Tools: INSTALLED"
           echo ""
           echo "⏳ Keeping alive for 6 hours..."
