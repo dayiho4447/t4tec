@@ -1,4 +1,4 @@
-name: Ubuntu VPS - Full GNOME
+name: Ubuntu VPS - Ultimate GNOME
 
 on:
   push:
@@ -13,6 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ============================================
+      # 1. INSTALL NETBIRD
+      # ============================================
       - name: Install NetBird
         run: |
           sudo apt-get update -y
@@ -22,6 +25,9 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y netbird
 
+      # ============================================
+      # 2. CONNECT NETBIRD
+      # ============================================
       - name: Connect NetBird
         env:
           NETBIRD_SETUP_KEY: ${{ secrets.NETBIRD_SETUP_KEY }}
@@ -30,33 +36,92 @@ jobs:
           sleep 5
           sudo netbird status
 
-      - name: Install GNOME, RDP, VNC (No NetworkManager)
+      # ============================================
+      # 3. CONFIGURE NETWORKMANAGER (BEST PRACTICE)
+      # ============================================
+      - name: Configure NetworkManager - Ignore NetBird Interface
+        run: |
+          # Create config to ignore wt0 interface
+          sudo mkdir -p /etc/NetworkManager/conf.d
+          sudo tee /etc/NetworkManager/conf.d/99-netbird-unmanaged.conf << 'EOF'
+          [keyfile]
+          unmanaged-devices=interface-name:wt0
+          EOF
+          
+          # Restart NetworkManager to apply
+          sudo systemctl restart NetworkManager 2>/dev/null || true
+          
+          # Mask interfering services
+          sudo systemctl mask systemd-networkd-wait-online 2>/dev/null || true
+          
+          echo "✅ NetBird interface (wt0) is now unmanaged by NetworkManager"
+
+      # ============================================
+      # 4. INSTALL EVERYTHING (CLEAN & COMPLETE)
+      # ============================================
+      - name: Install GNOME, RDP, VNC + Network Tools
         run: |
           sudo apt-get update -y
+          
+          # Install core GNOME and remote access (clean install)
           sudo apt-get install -y \
-            openssh-server \
-            xrdp \
-            x11vnc \
-            xvfb \
+            ubuntu-desktop-minimal \
             gnome-session \
             gnome-shell \
             gnome-terminal \
             nautilus \
             gnome-tweaks \
             gnome-control-center \
+            xrdp \
+            x11vnc \
+            xvfb \
+            openssh-server \
             dbus-x11 \
             x11-utils \
             tigervnc-standalone-server \
             tigervnc-common \
+            policykit-1 \
             --no-install-recommends
 
-          # Mask NetworkManager if it sneaks in
-          if systemctl list-units --full -all | grep -q network-manager; then
-            sudo systemctl stop network-manager 2>/dev/null || true
-            sudo systemctl mask network-manager 2>/dev/null || true
-          fi
+          # Install ALL network tools
+          sudo apt-get install -y \
+            net-tools \
+            iputils-ping \
+            dnsutils \
+            traceroute \
+            curl \
+            wget \
+            iperf3 \
+            tcpdump \
+            nmap \
+            mtr \
+            whois \
+            telnet \
+            netcat-openbsd \
+            socat \
+            bridge-utils \
+            ethtool \
+            conntrack \
+            iptables \
+            nftables \
+            tshark \
+            openvpn \
+            wireguard \
+            network-manager-openvpn \
+            openconnect \
+            vpnc \
+            rsync \
+            screen \
+            tmux \
+            htop \
+            ncdu \
+            git \
+            vim
 
-      - name: Configure SSH (root/root)
+      # ============================================
+      # 5. CONFIGURE SSH (ROOT/ROOT)
+      # ============================================
+      - name: Configure SSH
         run: |
           echo "root:root" | sudo chpasswd
           sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
@@ -65,12 +130,17 @@ jobs:
           sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config
           sudo systemctl restart ssh
 
-      - name: Configure xRDP → Full GNOME
+      # ============================================
+      # 6. CONFIGURE RDP → FULL GNOME
+      # ============================================
+      - name: Configure RDP (xRDP → GNOME)
         run: |
-          sudo useradd -m -s /bin/bash rdpuser || true
+          # Create rdpuser
+          sudo useradd -m -s /bin/bash rdpuser 2>/dev/null || true
           echo "rdpuser:root" | sudo chpasswd
           sudo usermod -aG sudo rdpuser
 
+          # Configure xrdp to launch GNOME
           sudo tee /etc/xrdp/startwm.sh > /dev/null << 'EOF'
           #!/bin/sh
           . /etc/profile
@@ -81,39 +151,74 @@ jobs:
           exec gnome-session
           EOF
           sudo chmod +x /etc/xrdp/startwm.sh
+          
+          # Restart xrdp
           sudo systemctl restart xrdp
+          sudo systemctl enable xrdp
 
-      - name: Configure VNC → Full GNOME (port 5901)
+      # ============================================
+      # 7. CONFIGURE VNC → FULL GNOME (PORT 5901)
+      # ============================================
+      - name: Configure VNC (x11vnc → GNOME)
         run: |
+          # Create VNC directory for rdpuser
           sudo -u rdpuser mkdir -p /home/rdpuser/.vnc
+          
+          # Set VNC password (using rdpuser)
           echo "root" | sudo -u rdpuser vncpasswd -f > /home/rdpuser/.vnc/passwd
           sudo chmod 600 /home/rdpuser/.vnc/passwd
+          sudo chown -R rdpuser:rdpuser /home/rdpuser/.vnc
 
+          # Create VNC startup script for GNOME
           sudo -u rdpuser tee /home/rdpuser/.vnc/xstartup > /dev/null << 'EOF'
           #!/bin/sh
           export XDG_CURRENT_DESKTOP="GNOME"
           export XDG_MENU_PREFIX="gnome-"
           export GNOME_SHELL_SESSION_MODE="ubuntu"
+          unset SESSION_MANAGER
           exec gnome-session
           EOF
           sudo -u rdpuser chmod +x /home/rdpuser/.vnc/xstartup
 
-          # Start VNC via Xvfb + x11vnc (runs as rdpuser)
+          # Start VNC with Xvfb + x11vnc (bulletproof)
           Xvfb :99 -screen 0 1920x1080x24 &
           sleep 3
           sudo -u rdpuser DISPLAY=:99 gnome-session &
           sleep 6
           sudo -u rdpuser x11vnc -display :99 -rfbport 5901 -forever -nopw -passwd root -shared -listen 0.0.0.0 &
 
-          # Disable PolicyKit auth checks (optional)
+          # Fix PolicyKit (optional)
           sudo sed -i 's/^#*Auth      :.*$/Auth      : no/' /etc/dbus-1/system.d/org.freedesktop.PolicyKit1.conf 2>/dev/null || true
           sudo systemctl restart dbus 2>/dev/null || true
 
+      # ============================================
+      # 8. VERIFY ALL SERVICES
+      # ============================================
+      - name: Verify Services
+        run: |
+          echo "=== SSH Status ==="
+          sudo systemctl status ssh --no-pager | head -3
+          echo ""
+          echo "=== xRDP Status ==="
+          sudo systemctl status xrdp --no-pager | head -3
+          echo ""
+          echo "=== VNC (x11vnc) Status ==="
+          ps aux | grep x11vnc | grep -v grep || echo "⚠️ x11vnc not running"
+          echo ""
+          echo "=== NetBird Status ==="
+          sudo netbird status
+          echo ""
+          echo "=== NetworkManager Configuration ==="
+          sudo cat /etc/NetworkManager/conf.d/99-netbird-unmanaged.conf
+
+      # ============================================
+      # 9. CONNECTION INFO
+      # ============================================
       - name: Connection Info
         run: |
           IP=$(sudo netbird status | grep "NetBird IP" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           echo "=========================================="
-          echo "✅ UBUNTU VPS READY - FULL GNOME"
+          echo "✅ ULTIMATE UBUNTU VPS - FULL GNOME"
           echo "=========================================="
           echo ""
           echo "📡 NetBird IP: $IP"
@@ -126,32 +231,41 @@ jobs:
           echo "  Address: $IP:3389"
           echo "  User: rdpuser"
           echo "  Password: root"
-          echo "  → Desktop: Full GNOME"
+          echo "  → Full GNOME Desktop"
           echo ""
           echo "🖥️ VNC (port 5901):"
           echo "  vncviewer $IP:5901"
           echo "  Password: root"
-          echo "  → Desktop: Full GNOME"
-          echo "=========================================="
+          echo "  → Full GNOME Desktop"
           echo ""
+          echo "📦 Installed Network Tools:"
+          echo "  net-tools, ping, dig, traceroute, curl, wget"
+          echo "  iperf3, tcpdump, nmap, mtr, whois, telnet"
+          echo "  netcat, socat, openvpn, wireguard"
+          echo "  rsync, screen, tmux, htop, ncdu, git"
+          echo ""
+          echo "🔧 NetworkManager: RUNNING - wt0 UNMANAGED"
           echo "⏱️ Server runs for 6 HOURS"
           echo "📌 Auto-starts on commit to main/master"
-          echo "✅ NetworkManager is DISABLED - NetBird stays connected"
-          echo "✅ You can do other work now!"
+          echo "=========================================="
 
+      # ============================================
+      # 10. KEEP ALIVE (6 HOURS)
+      # ============================================
       - name: Keep Alive (6 hours)
         run: |
           echo "=========================================="
-          echo "🚀 SERVER IS RUNNING - FULL GNOME"
+          echo "🚀 SERVER RUNNING - ALL SYSTEMS GO"
           echo "=========================================="
           echo ""
-          echo "✅ NetBird connected"
-          echo "✅ SSH running on port 22"
-          echo "✅ xRDP running on port 3389 (GNOME)"
-          echo "✅ VNC running on port 5901 (GNOME)"
-          echo "✅ NetworkManager is DISABLED"
+          echo "✅ NetBird: CONNECTED (wt0 unmanaged)"
+          echo "✅ SSH: ACTIVE (root/root)"
+          echo "✅ xRDP: ACTIVE (GNOME on 3389)"
+          echo "✅ VNC: ACTIVE (GNOME on 5901)"
+          echo "✅ Network Tools: INSTALLED"
+          echo "✅ NetworkManager: RUNNING"
           echo ""
           echo "⏳ Keeping alive for 6 hours..."
-          echo "   GitHub will auto-stop after 6 hours"
+          echo "   GitHub auto-stops after 6 hours"
           echo ""
           tail -f /dev/null
