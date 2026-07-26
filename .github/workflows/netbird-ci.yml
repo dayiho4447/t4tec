@@ -103,8 +103,7 @@ jobs:
           echo "✅ Downloading: $LATEST_URL"
           wget -O /tmp/turbovnc_latest_amd64.deb "$LATEST_URL"
           sudo apt-get install -y /tmp/turbovnc_latest_amd64.deb
-          export PATH="/opt/TurboVNC/bin:$PATH"
-          echo 'export PATH="/opt/TurboVNC/bin:$PATH"' >> ~/.bashrc
+          sudo ln -sf /opt/TurboVNC/bin/* /usr/local/bin/ 2>/dev/null || true
           echo "✅ TurboVNC installed"
 
       # ============================================
@@ -112,7 +111,7 @@ jobs:
       # ============================================
       - name: Configure SSH
         run: |
-          echo "root:root" | sudo chpasswd
+          echo "root:root" | sudo chpasswd 2>/dev/null || true
           sudo sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
@@ -145,19 +144,19 @@ jobs:
           sudo systemctl enable xrdp
 
       # ============================================
-      # 8. CONFIGURE TURBOVNC (root/root)
+      # 8. CONFIGURE TURBOVNC (root/root) - FIXED
       # ============================================
       - name: Configure TurboVNC
         run: |
           export PATH="/opt/TurboVNC/bin:$PATH"
           
-          # Setup root VNC directory
-          mkdir -p /root/.vnc
-          echo "root" | /opt/TurboVNC/bin/vncpasswd -f > /root/.vnc/passwd
-          chmod 600 /root/.vnc/passwd
+          # Setup root VNC directory (with sudo)
+          sudo mkdir -p /root/.vnc
+          echo "root" | sudo /opt/TurboVNC/bin/vncpasswd -f | sudo tee /root/.vnc/passwd > /dev/null
+          sudo chmod 600 /root/.vnc/passwd
 
           # Create xstartup for root
-          tee /root/.vnc/xstartup > /dev/null << 'EOF'
+          sudo tee /root/.vnc/xstartup > /dev/null << 'EOF'
           #!/bin/sh
           export XDG_CURRENT_DESKTOP="GNOME"
           export XDG_MENU_PREFIX="gnome-"
@@ -166,10 +165,10 @@ jobs:
           unset DBUS_SESSION_BUS_ADDRESS
           exec gnome-session
           EOF
-          chmod +x /root/.vnc/xstartup
+          sudo chmod +x /root/.vnc/xstartup
 
-          # Start TurboVNC on display :1 (port 5901)
-          /opt/TurboVNC/bin/vncserver :1 -geometry 1920x1080 -depth 24
+          # Start TurboVNC on display :1 (port 5901) as root
+          sudo /opt/TurboVNC/bin/vncserver :1 -geometry 1920x1080 -depth 24
 
           echo "✅ TurboVNC running on port 5901"
 
@@ -186,7 +185,7 @@ jobs:
           sudo systemctl status xrdp --no-pager | head -3
           echo ""
           echo "=== TurboVNC ==="
-          /opt/TurboVNC/bin/vncserver -list
+          sudo /opt/TurboVNC/bin/vncserver -list
           echo ""
           echo "=== NetBird ==="
           sudo netbird status
